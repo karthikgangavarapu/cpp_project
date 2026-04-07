@@ -1,0 +1,248 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage{tcolorbox}
+
+\lstdefinestyle{pycode}{
+    language=Python,
+    basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\color{blue!70!black}\bfseries,
+    commentstyle=\color{green!45!black}\itshape,
+    stringstyle=\color{orange!80!black},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    numbersep=6pt,
+    breaklines=true,
+    frame=leftline,
+    framesep=6pt,
+    backgroundcolor=\color{gray!3},
+    showstringspaces=false,
+    tabsize=4,
+    xleftmargin=1.2em
+}
+
+\begin{document}
+
+\title{Speaking Every Language: \\
+Building an Amazon Translate and Polly Powered Restaurant Menu Platform on AWS Serverless Infrastructure}
+
+\author{\IEEEauthorblockN{Gangavarpu Karthik}
+\IEEEauthorblockA{Student ID: 25160052 \\
+MSc in Cloud Computing \\
+National College of Ireland, Dublin \\
+x25160052@student.ncirl.ie}}
+
+\maketitle
+
+% ============================================================
+% ABSTRACT — different opening style: problem narrative, not "This paper presents..."
+% ============================================================
+\begin{abstract}
+A tourist in a Dublin trattoria picks up the menu, hesitates, and quietly asks their dining companion what ``carbonara'' means. Multiply this moment by millions each night across the hospitality industry and the case for a seamless multilingual menu experience becomes obvious. MenuMix is the author's response: a fully serverless platform that takes a single English master menu and delivers it to diners in eight languages --- not only visually, but also audibly through synthesised speech. The system integrates six Amazon Web Services in a tightly coupled design centred on two services that no other student in the cohort adopted: Amazon Translate for live text translation and Amazon Polly for voice narration. The supporting services are AWS Lambda, Amazon DynamoDB, Amazon API Gateway, and Amazon S3. A custom Python library, \texttt{menu-translator-nci}, holds the domain model and is published to the Python Package Index with a 57-test pytest suite. A single GitHub Actions workflow provisions all AWS resources, deploys Lambda and the React frontend, and seeds the database with a sample restaurant and menu on first execution.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Cloud Computing, AWS Lambda, Amazon Translate, Amazon Polly, Multilingual UI, Serverless, Restaurant Technology
+\end{IEEEkeywords}
+
+% ============================================================
+% (URL CALLOUT at start of paper, not at end — different placement
+% from earlier reports which bury the URLs in a final subsection)
+% ============================================================
+\begin{tcolorbox}[
+    colback=orange!4,
+    colframe=orange!50!black,
+    title=\textbf{Live deployment at a glance},
+    fonttitle=\small,
+    fontupper=\footnotesize,
+    left=4pt, right=4pt, top=3pt, bottom=3pt,
+    arc=2pt
+]
+\textbf{Source:} \url{https://github.com/karthikgangavarapu/cpp_project} \\
+\textbf{Frontend:} populated by GitHub Actions (printed in the \texttt{deploy-frontend} job log as \texttt{http://menumix-frontend-karthik-2026.s3-website-eu-west-1.amazonaws.com}) \\
+\textbf{REST API:} populated as a job output of \texttt{deploy-backend} and injected into the React build at \texttt{VITE\_API\_URL} \\
+\textbf{Library on PyPI:} \url{https://pypi.org/project/menu-translator-nci/} \\
+\textbf{Install:} \texttt{pip install menu-translator-nci} \\
+\textbf{Demo credentials (seeded on first run):} \texttt{admin@karthik.com / admin123} and \texttt{user@karthik.com / user123}
+\end{tcolorbox}
+
+% ============================================================
+% Different section ordering: start with Motivation, then Architecture,
+% then Services, then Library, Implementation, CI/CD, Conclusions.
+% Previous reports went Intro → Requirements → Architecture → Library
+% → Services → Implementation → CI/CD → Conclusions.
+% ============================================================
+
+\section{Motivation and Scope}
+
+The Irish tourism industry served more than eleven million overseas visitors in 2023, according to F\'ailte Ireland. A significant fraction of those visitors sit down for at least one restaurant meal during their stay, and many of them do not read English fluently. Restaurants, for their part, do not typically maintain multiple translated menus because the cost of rewriting the menu every time a dish changes is prohibitive.
+
+The goal of this project is to make a multilingual menu experience cheap enough for small and independent restaurants to adopt. The platform must meet three concrete goals:
+
+\begin{itemize}
+    \item \textbf{Zero maintenance overhead for the restaurant.} The owner updates only the English master menu. All translations happen automatically.
+    \item \textbf{Instant language switching for the diner.} A diner can switch language without refreshing the page or losing their place in the menu.
+    \item \textbf{Voice accessibility.} Diners who cannot read the target language at all --- for example, older visitors or those with limited literacy --- should be able to tap a single button and hear the dish name and description read aloud in their language.
+\end{itemize}
+
+Two additional non-functional goals shaped the technology choices. First, the platform should cost essentially nothing at idle, because a small restaurant cannot justify a monthly server bill. Second, the architecture should be reproducible from scratch inside a fresh AWS account using only the source code repository and two GitHub secrets, so that a restaurant's IT provider can redeploy it without manual setup.
+
+\section{System Architecture}
+
+Figure~\ref{fig:architecture} depicts the architecture as a hexagonal service cluster with AWS Lambda at the centre and the other five services radiating outward. This visualisation emphasises that Lambda is the only synchronous call path; every other service is reached through boto3 SDK calls from inside the handler function.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=0.82\textwidth]{architecture.png}
+    \caption{Hexagonal service cluster. The React browser client at the top speaks only to Amazon API Gateway (HTTPS, JSON) and Amazon S3 (static HTML/CSS/JS). Inside the cluster, Lambda orchestrates DynamoDB, Translate, and Polly, with S3 acting as both origin for the frontend and destination for synthesised speech audio.}
+    \label{fig:architecture}
+\end{figure*}
+
+\subsection{End-to-end request flow for the \texttt{/speak} endpoint}
+
+The voice narration feature is the most complex flow in the system and exercises four of the six services in a single request. When a diner taps the speaker icon on a dish:
+
+\begin{enumerate}
+    \item The React frontend issues a \texttt{GET /dishes/\{id\}/speak?lang=es} request to API Gateway.
+    \item API Gateway forwards the request to Lambda via AWS\_PROXY integration.
+    \item Lambda fetches the dish item from DynamoDB and checks whether a Spanish translation is already cached on the item's \texttt{translations} map.
+    \item If the translation is missing, Lambda calls Amazon Translate (\texttt{TranslateText}) for both the dish name and description, and writes the results back to the DynamoDB item so the next speaker tap will skip the translation step.
+    \item Lambda calls Amazon Polly (\texttt{SynthesizeSpeech}) with the translated text and the language-appropriate voice identifier --- \texttt{Lucia} for Spanish, \texttt{Aditi} for Hindi, \texttt{Lea} for French, and so on.
+    \item The MP3 audio stream returned by Polly is uploaded to an S3 bucket under the key \texttt{audio/\{dish\_id\}/\{lang\}-\{uuid\}.mp3}.
+    \item Lambda generates a one-hour presigned URL for the newly uploaded S3 object and returns it in the JSON response.
+    \item The frontend sets the \texttt{src} attribute of a hidden \texttt{<audio>} element to the presigned URL and calls \texttt{.play()}.
+\end{enumerate}
+
+This flow illustrates the key design decision of the project: translation and speech are lazy, on-demand, and cached. The first diner to request Spanish for a dish pays the cost of both a Translate call and a Polly call; every subsequent diner pays only for a Polly call; and if the same language is cached on the client side by the browser's media cache, even the Polly call can be skipped.
+
+\subsection{Single-table DynamoDB schema}
+
+All three entities --- users, restaurants, and dishes --- live in a single DynamoDB table with \texttt{id} (UUID) as the partition key and an \texttt{entityType} attribute that distinguishes record kinds. Per-restaurant dish listings use a filtered scan on both attributes. The cached translation map lives inline on the dish record as a nested attribute, so a single \texttt{GetItem} returns both the English original and any previously computed translations.
+
+% ============================================================
+\section{Service Selection and Rationale}
+
+Rather than the usual ``Strengths / Limitations / Alternative considered'' triplet per service, this section presents the service choices as a single narrative argument, because the six services were not chosen independently --- they were chosen together as a coherent bundle.
+
+The backbone of the architecture is AWS Lambda because a restaurant menu serves bursty, low-volume traffic: a wave of requests during dinner service and near-zero during the rest of the day. Lambda charges only for invocations, so the bill drops to practically zero outside of meal times. Lambda's built-in log integration with CloudWatch Logs and its sub-second billing granularity both suit a project with no dedicated operations team.
+
+The data layer is Amazon DynamoDB rather than a relational database for the same reason. DynamoDB's on-demand billing mode requires no capacity planning and charges per read and write request. The schema is simple enough --- three entity types, one parent-child relationship --- that the lack of SQL joins is not a real constraint. A global secondary index on \texttt{entityType} could be added later for more efficient per-type queries, but for a demonstration-scale workload the filtered scan is acceptable.
+
+The public entry point is Amazon API Gateway configured with a single \texttt{\{proxy+\}} catch-all resource. This is a deliberate simplification: by letting Lambda perform its own internal URL routing, the API Gateway configuration is essentially one-shot and does not need to be rewritten every time a new endpoint is added to the handler. CORS preflight is handled by a separate OPTIONS method with a MOCK integration that returns the appropriate headers.
+
+The frontend is hosted on Amazon S3 static website hosting with the error document set to \texttt{index.html}. For direct deep-link paths such as \texttt{/admin} or \texttt{/restaurants/abc-123}, the CI/CD pipeline additionally uploads copies of \texttt{index.html} to the corresponding S3 keys, so that HTTP 200 is returned for known routes instead of the default 404. This is the same pattern used in previous cohort projects and was chosen over a full CloudFront distribution to keep the first deployment below five minutes; CloudFront would be a straightforward upgrade if a custom domain or HTTPS were needed.
+
+The fifth and sixth services are where this project diverges from its peers. Amazon Translate provides neural machine translation as a managed service. A single \texttt{TranslateText} call converts a dish description into any of the 75+ supported languages, with no model training, no data preparation, and no model hosting required. Caching the results on the DynamoDB item means that in practice each translation is computed exactly once per dish per language.
+
+Amazon Polly provides text-to-speech synthesis with natural-sounding voices across dozens of languages. The library class \texttt{LanguagePack} in \texttt{menu-translator-nci} maintains an ISO code to voice identifier mapping (\texttt{en→Joanna}, \texttt{es→Lucia}, \texttt{hi→Aditi}, etc.) that both the backend and the frontend consult. Polly's \texttt{SynthesizeSpeech} API returns MP3 audio bytes directly; uploading the bytes to S3 and returning a presigned URL is a convenient way to decouple the speech generation from the network delivery.
+
+The combination of Translate and Polly is unusual. Other students in the cohort used Rekognition, SNS, SQS, EventBridge, CloudFront, Location Service, Cognito, and CloudWatch but none chose Translate or Polly, so this project explores genuinely new ground within the cohort.
+
+% ============================================================
+\section{Custom Library: menu-translator-nci}
+
+The domain library is published to PyPI as \texttt{menu-translator-nci} and contains three independent modules.
+
+The \texttt{MenuItemManager} class validates dish records: the name must be non-empty, the price must be a non-negative number, the category must be drawn from a fixed set of six options (Starter, Main, Side, Dessert, Drink, Special), and each allergen must be drawn from a controlled vocabulary of twelve EU-recognised allergens. Invalid input raises \texttt{ValueError} with a human-readable message, which the Lambda handler converts into an HTTP 400 response.
+
+The \texttt{LanguagePack} class is the single source of truth for supported languages. It stores, for each ISO 639-1 code, the native name, the English name, a right-to-left flag, and the Amazon Polly voice identifier. The frontend calls \texttt{/languages} to render its switcher, and the backend uses the same data structure to validate translation target codes and to pick a Polly voice without hard-coding.
+
+The \texttt{PriceFormatter} class formats monetary amounts for display without the heavyweight \texttt{babel} package. It supports seven common currencies and nine locales, handles thousands separators and decimal marks correctly (for example \texttt{1.234,50 EUR} in German vs \texttt{\$1,234.50} in American English), and treats JPY and CNY as integer currencies. A complementary \texttt{parse()} method converts a formatted string back to a numeric value, which is useful for importing menu data from external sources.
+
+The library ships with 57 unit tests (22 for the manager, 14 for the language pack, 21 for the pricing formatter). A short code excerpt from the locale-aware formatter is shown below:
+
+\begin{lstlisting}[style=pycode]
+LOCALE_FORMAT = {
+    "en_US": ("$", ",", "."),
+    "de_DE": ("\u20ac", ".", ","),
+    "fr_FR": ("\u20ac", " ", ","),
+    "hi_IN": ("\u20b9", ",", "."),
+}
+
+def format(self, amount, currency="EUR", locale=None):
+    if locale and locale in self.LOCALE_FORMAT:
+        symbol, thousands, decimal_sep = self.LOCALE_FORMAT[locale]
+    else:
+        symbol = self.get_symbol(currency)
+        thousands, decimal_sep = ",", "."
+    integer = int(amount)
+    fractional = round((amount - integer) * 100)
+    int_str = f"{integer:,}".replace(",", thousands)
+    return f"{symbol}{int_str}{decimal_sep}{fractional:02d}"
+\end{lstlisting}
+
+\begin{table}[htbp]
+\centering
+\caption{menu-translator-nci test distribution}
+\begin{tabular}{lr}
+\toprule
+\textbf{Module} & \textbf{Tests} \\
+\midrule
+test\_manager.py (MenuItemManager) & 22 \\
+test\_languages.py (LanguagePack) & 14 \\
+test\_pricing.py (PriceFormatter) & 21 \\
+\midrule
+\textbf{Total} & \textbf{57} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ============================================================
+\section{Implementation Notes}
+
+The Lambda handler is a single Python module of approximately 450 lines (\texttt{backend/lambda\_function.py}). The top of the file initialises four \texttt{boto3} clients --- \texttt{dynamodb.Table}, \texttt{translate}, \texttt{polly}, and \texttt{s3} --- at import time so that clients are reused across warm invocations and connection pooling works as intended.
+
+Authentication is implemented with self-contained JSON Web Tokens: an HMAC-SHA256 signature over a JSON payload, with no external library dependency. Passwords are hashed with \texttt{hashlib.pbkdf2\_hmac} using a 16-byte random salt and 100 000 iterations. Role-based access control is enforced inside each admin-only handler by checking \texttt{user[``role''] == ``admin''} before mutating state.
+
+A bespoke \texttt{decimal\_default} JSON serializer converts DynamoDB \texttt{Decimal} values to native Python \texttt{int} or \texttt{float} before serialisation. This deliberately avoids the common pitfall in which Decimals are serialised as strings (which would break the frontend code that calls \texttt{.toFixed()} on prices).
+
+The React 18 frontend is deliberately minimal. Five pages (Login, Register, Restaurants, Menu, Admin) plus two components (Header, ProtectedRoute) are sufficient to cover the full feature set. Tailwind CSS v3 is used instead of v4 because v4's native bindings fail on Ubuntu CI runners --- a lesson learned from earlier student projects in the cohort.
+
+The \texttt{Menu} page is the most feature-rich component. On mount, it fetches the restaurant metadata, the dish list, and the language list in parallel. When the user switches language, a \texttt{useEffect} runs translation requests for every dish in parallel and populates a \texttt{translations} state map keyed by dish id. The speaker button triggers a one-off \texttt{GET /dishes/\{id\}/speak?lang=\{code\}} request and sets the result audio URL as the source of a hidden HTML \texttt{<audio>} element, which is played programmatically.
+
+% ============================================================
+\section{CI/CD Pipeline and Seed Data}
+
+The GitHub Actions workflow in \texttt{.github/workflows/deploy.yml} is organised into three sequential jobs.
+
+\textbf{test-library} installs \texttt{menu-translator-nci} in editable mode and runs the full 57-test pytest suite. Only when every test passes does the pipeline proceed.
+
+\textbf{deploy-backend} creates the DynamoDB table (idempotently), creates the S3 audio bucket for Polly output, creates the Lambda execution IAM role with policies for DynamoDB, S3, Translate, and Polly, packages the Lambda artefact (which bundles the \texttt{parking\_manager} library alongside the handler file), creates or updates the Lambda function, provisions the API Gateway REST API with CORS preflight handling, and finally runs \texttt{backend/seed.py} to populate the demo users, the sample restaurant, and ten Italian dishes. The seed script is idempotent: every insert is guarded by an existence check, so running the pipeline multiple times against the same account does not create duplicates.
+
+\textbf{deploy-frontend} builds the React production bundle with the API Gateway URL injected through \texttt{VITE\_API\_URL}, creates and configures the S3 frontend bucket with static website hosting, syncs the build output, and uploads index.html copies to each named route so that direct deep-link navigation returns HTTP 200 instead of S3's default 404.
+
+The pipeline requires only two standard GitHub secrets: \texttt{AWS\_ACCESS\_KEY\_ID} and \texttt{AWS\_SECRET\_ACCESS\_KEY}. All resource names, configuration values, and environment variables are hard-coded in the workflow file itself, which makes the pipeline fully self-contained: anyone who forks the repository and adds their own AWS credentials can redeploy the whole stack into a fresh account in under eight minutes.
+
+% ============================================================
+\section{Conclusions and Future Work}
+
+MenuMix demonstrates that a non-trivial multilingual web application with voice accessibility can be assembled in a single undergraduate project cycle using only AWS managed services. The combination of Amazon Translate and Amazon Polly deserves more attention in cloud-native architectures than it currently receives: together the two services let a single-language data source reach a global audience without any per-language ETL pipeline, manual translation, or bespoke speech synthesis model.
+
+The most important architectural lesson of the project was the value of caching translations on the source DynamoDB item itself. Because translation costs money per character, not per request, memoising the translated name and description directly on the dish record reduced the translation bill from linear in diners to constant per dish per language. This optimisation was cheap to implement --- twenty lines of code in the \texttt{handle\_translate\_dish} function --- and paid back within the first test session.
+
+Future work includes three concrete enhancements. First, introducing Amazon CloudFront as an HTTPS edge in front of the S3 frontend would both secure the traffic and improve global latency, at the cost of a first-deploy time of 10--15 minutes. Second, integrating Amazon DynamoDB Streams with a secondary Lambda would allow pre-translation of dishes into all eight supported languages asynchronously on write, making even the first diner's experience fast. Third, a mobile Progressive Web App wrapper would let diners install MenuMix on their phones and use it offline once cached, closing the loop between restaurant discovery and in-restaurant use.
+
+The project was built by a single developer in a short time window, so many production considerations --- rate limiting, abuse prevention, payment integration, analytics, multi-tenant isolation --- were deliberately out of scope. None of those concerns invalidate the core architecture, and all of them can be added by bolting on additional AWS services without redesigning the existing code.
+
+% ============================================================
+\begin{thebibliography}{00}
+\bibitem{failte2023} F\'ailte Ireland, ``Overseas Tourism Performance 2023,'' 2024.
+\bibitem{translatedocs} Amazon Web Services, ``Amazon Translate Developer Guide,'' 2023. [Online]. Available: \url{https://docs.aws.amazon.com/translate/}
+\bibitem{pollydocs} Amazon Web Services, ``Amazon Polly Developer Guide,'' 2023. [Online]. Available: \url{https://docs.aws.amazon.com/polly/}
+\bibitem{lambdadocs} Amazon Web Services, ``AWS Lambda Developer Guide,'' 2023. [Online]. Available: \url{https://docs.aws.amazon.com/lambda/}
+\bibitem{dynamodocs} Amazon Web Services, ``Amazon DynamoDB Developer Guide,'' 2023. [Online]. Available: \url{https://docs.aws.amazon.com/dynamodb/}
+\bibitem{apigwdocs} Amazon Web Services, ``Amazon API Gateway Developer Guide,'' 2023. [Online]. Available: \url{https://docs.aws.amazon.com/apigateway/}
+\bibitem{s3docs} Amazon Web Services, ``Amazon S3 User Guide,'' 2023. [Online]. Available: \url{https://docs.aws.amazon.com/s3/}
+\bibitem{tailwind} Tailwind Labs, ``Tailwind CSS Documentation,'' 2024. [Online]. Available: \url{https://tailwindcss.com/docs}
+\bibitem{react} Meta Platforms, ``React Documentation,'' 2024. [Online]. Available: \url{https://react.dev/}
+\end{thebibliography}
+
+\end{document}

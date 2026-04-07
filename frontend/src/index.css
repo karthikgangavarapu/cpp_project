@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .skeleton {
+    @apply bg-stone-200 animate-pulse;
+  }
+}
