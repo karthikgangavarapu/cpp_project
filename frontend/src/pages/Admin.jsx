@@ -13,6 +13,24 @@ export default function Admin() {
   const [showDishModal, setShowDishModal] = useState(false);
   const [dishForm, setDishForm] = useState({ name: '', description: '', price: '', category: 'Main', allergens: '' });
   const [saving, setSaving] = useState(false);
+  const [showRestForm, setShowRestForm] = useState(false);
+  const [restForm, setRestForm] = useState({ name: '', cuisine: '', address: '', description: '' });
+
+  const handleAddRestaurant = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await api.createRestaurant({ ...restForm, currency: 'EUR', default_language: 'en' });
+      toast.success('Restaurant created');
+      setShowRestForm(false);
+      setRestForm({ name: '', cuisine: '', address: '', description: '' });
+      loadRestaurants();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to create restaurant');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const loadRestaurants = async () => {
     try {
@@ -83,18 +101,57 @@ export default function Admin() {
         <h1 className="text-2xl font-bold text-stone-900">Admin — Menu Management</h1>
       </div>
 
-      {/* Restaurant selector */}
+      {/* Restaurant selector + create */}
       <div className="bg-white rounded-xl border border-stone-200 p-4 mb-6">
-        <label className="block text-xs font-medium text-stone-500 mb-2 uppercase tracking-wider">Managing restaurant</label>
-        <select
-          value={selectedId || ''}
-          onChange={(e) => setSelectedId(e.target.value)}
-          className="w-full border border-stone-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
-        >
-          {restaurants.map((r) => (
-            <option key={r.id} value={r.id}>{r.name}</option>
-          ))}
-        </select>
+        <div className="flex items-center justify-between mb-2">
+          <label className="block text-xs font-medium text-stone-500 uppercase tracking-wider">Managing restaurant</label>
+          <button
+            onClick={() => setShowRestForm(!showRestForm)}
+            className="text-xs font-medium text-amber-600 hover:text-amber-700"
+          >
+            {showRestForm ? 'Cancel' : '+ New Restaurant'}
+          </button>
+        </div>
+        {showRestForm ? (
+          <form onSubmit={handleAddRestaurant} className="space-y-3 mt-3 pt-3 border-t border-stone-100">
+            <input
+              value={restForm.name} onChange={(e) => setRestForm({ ...restForm, name: e.target.value })}
+              required placeholder="Restaurant name"
+              className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+            />
+            <div className="grid grid-cols-2 gap-3">
+              <input
+                value={restForm.cuisine} onChange={(e) => setRestForm({ ...restForm, cuisine: e.target.value })}
+                placeholder="Cuisine (e.g. Italian)"
+                className="border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+              />
+              <input
+                value={restForm.address} onChange={(e) => setRestForm({ ...restForm, address: e.target.value })}
+                placeholder="Address"
+                className="border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+              />
+            </div>
+            <textarea
+              value={restForm.description} onChange={(e) => setRestForm({ ...restForm, description: e.target.value })}
+              rows={2} placeholder="Description"
+              className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+            />
+            <button type="submit" disabled={saving}
+              className="w-full bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-50">
+              {saving ? 'Creating...' : 'Create Restaurant'}
+            </button>
+          </form>
+        ) : (
+          <select
+            value={selectedId || ''}
+            onChange={(e) => setSelectedId(e.target.value)}
+            className="w-full border border-stone-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+          >
+            {restaurants.map((r) => (
+              <option key={r.id} value={r.id}>{r.name}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* Dishes table */}

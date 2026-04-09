@@ -50,12 +50,17 @@ export default function Menu() {
       dishes.map((d) => api.translateDish(d.id, lang).then((r) => [d.id, r.data]).catch(() => null))
     ).then((results) => {
       const map = {};
+      let hasFallback = false;
       for (const entry of results) {
         if (!entry) continue;
         const [dishId, t] = entry;
         map[dishId] = t;
+        if (t.fallback) hasFallback = true;
       }
       setTranslations(map);
+      if (hasFallback) {
+        toast('Translation service warming up — showing original text. Try again shortly.', { icon: '🌐', duration: 4000 });
+      }
     }).finally(() => setTranslatingAll(false));
   }, [lang, dishes]);
 
