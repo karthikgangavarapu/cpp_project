@@ -18,6 +18,39 @@ export default function Admin() {
   const [editingDish, setEditingDish] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [previewDish, setPreviewDish] = useState(null);
+  const [editingRest, setEditingRest] = useState(null);
+  const [editRestForm, setEditRestForm] = useState({ name: '', cuisine: '', address: '', description: '' });
+
+  const handleEditRestStart = (r) => {
+    setEditingRest(r.id);
+    setEditRestForm({ name: r.name, cuisine: r.cuisine || '', address: r.address || '', description: r.description || '' });
+  };
+
+  const handleEditRestSave = async () => {
+    setSaving(true);
+    try {
+      await api.updateRestaurant(editingRest, { ...editRestForm, currency: 'EUR', default_language: 'en' });
+      toast.success('Restaurant updated');
+      setEditingRest(null);
+      loadRestaurants();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to update restaurant');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteRest = async (id, name) => {
+    if (!confirm(`Delete "${name}"? All its dishes will also be removed.`)) return;
+    try {
+      await api.deleteRestaurant(id);
+      toast.success('Restaurant deleted');
+      if (selectedId === id) setSelectedId(null);
+      loadRestaurants();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to delete restaurant');
+    }
+  };
 
   const handleAddRestaurant = async (e) => {
     e.preventDefault();
@@ -131,7 +164,7 @@ export default function Admin() {
       <div className="bg-white rounded-xl border border-stone-200 p-4 mb-6">
         <div className="flex items-center justify-between mb-2">
           <label className="block text-xs font-medium text-stone-500 uppercase tracking-wider">Managing restaurant</label>
-          <button onClick={() => setShowRestForm(!showRestForm)} className="text-xs font-medium text-amber-600 hover:text-amber-700">
+          <button onClick={() => { setShowRestForm(!showRestForm); setEditingRest(null); }} className="text-xs font-medium text-amber-600 hover:text-amber-700">
             {showRestForm ? 'Cancel' : '+ New Restaurant'}
           </button>
         </div>
@@ -152,10 +185,50 @@ export default function Admin() {
             </button>
           </form>
         ) : (
-          <select value={selectedId || ''} onChange={(e) => setSelectedId(e.target.value)}
-            className="w-full border border-stone-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500">
-            {restaurants.map((r) => (<option key={r.id} value={r.id}>{r.name}</option>))}
-          </select>
+          <div className="space-y-3">
+            <select value={selectedId || ''} onChange={(e) => setSelectedId(e.target.value)}
+              className="w-full border border-stone-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500">
+              {restaurants.map((r) => (<option key={r.id} value={r.id}>{r.name}</option>))}
+            </select>
+
+            {selectedId && !editingRest && (
+              <div className="flex gap-2">
+                <button onClick={() => handleEditRestStart(restaurants.find((r) => r.id === selectedId))}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg transition-colors">
+                  <Pencil className="w-3.5 h-3.5" /> Edit Restaurant
+                </button>
+                <button onClick={() => handleDeleteRest(selectedId, restaurants.find((r) => r.id === selectedId)?.name)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors">
+                  <Trash2 className="w-3.5 h-3.5" /> Delete
+                </button>
+              </div>
+            )}
+
+            {editingRest && (
+              <div className="space-y-3 pt-3 border-t border-stone-100">
+                <input value={editRestForm.name} onChange={(e) => setEditRestForm({ ...editRestForm, name: e.target.value })} placeholder="Restaurant name"
+                  className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500" />
+                <div className="grid grid-cols-2 gap-3">
+                  <input value={editRestForm.cuisine} onChange={(e) => setEditRestForm({ ...editRestForm, cuisine: e.target.value })} placeholder="Cuisine"
+                    className="border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500" />
+                  <input value={editRestForm.address} onChange={(e) => setEditRestForm({ ...editRestForm, address: e.target.value })} placeholder="Address"
+                    className="border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500" />
+                </div>
+                <textarea value={editRestForm.description} onChange={(e) => setEditRestForm({ ...editRestForm, description: e.target.value })} rows={2} placeholder="Description"
+                  className="w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500" />
+                <div className="flex gap-2">
+                  <button onClick={handleEditRestSave} disabled={saving}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 disabled:opacity-50">
+                    <Check className="w-4 h-4" /> Save
+                  </button>
+                  <button onClick={() => setEditingRest(null)}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-stone-100 text-stone-700 rounded-lg text-sm font-medium hover:bg-stone-200">
+                    <X className="w-4 h-4" /> Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
